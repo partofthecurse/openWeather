@@ -3,7 +3,8 @@ Open Source Weather Station that also looks quite nice.
 Concept:
 We are requesting Temperature and Weather ID with an openWeatherMap API Call . Weather is Displayed through Neopixel LEDs under a PMMA-Screen with engraved Icons. Temperature is resembled with LED Colour.
 
-Parts needes:
+Parts needed:
+
     - ESP8266 or ESP32 Board, alternatively arduino nano with wifi shield will do as well but not coded here
     - Optional: DHT22 or DHT11 Sensor to measure Indoor Temp and Humidity
     - 4x WS2812 (aka NeoPixel) LED
