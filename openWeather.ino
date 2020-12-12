@@ -358,6 +358,7 @@ void callback(char* topic, byte* message, unsigned int length) {
       Serial.println("The Party is over");
 #endif
       modus = 0;
+        firstloop = true;
     }
   }
 }
