@@ -343,11 +343,11 @@ void callback(char* topic, byte* message, unsigned int length) {
 #endif
     if (messageTemp == "PixelParty1") {
 #ifdef DEBUGING
-      Serial.println("Pixelparty1");
+      Serial.println("PixelParty1");
 #endif
       modus = 1;
     }
-    else if (messageTemp == "Pixelparty2") {
+    else if (messageTemp == "PixelParty2") {
 #ifdef DEBUGING
       Serial.println("PixelParty2");
 #endif
