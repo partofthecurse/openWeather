@@ -9,12 +9,14 @@ Parts needes:
     - 4x WS2812 (aka NeoPixel) LED
 
 Solder the 4 LEDs into a tiny LED Strip and connect to Dev Board:
+
     Board LED   LED   LED   LED
     3V3 - VCC - VCC - VCC - VCC
     GND - GND - GND - GND - GND
     D8 -  I/0 - I/O - I/O - I
 
 Connect DHT22 / DHT11 to
+
     Board DHT
     3V3 - +
     GND - -
@@ -28,6 +30,7 @@ Pixel-ID Icon reference (take care when assembling or switch in the code
     3 - snow
 
 Outdoortemperature & Colours:
+
     > 30°C - Red
     > 21°C - Warm yellow
     < 18°C - Light blue
