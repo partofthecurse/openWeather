@@ -43,3 +43,25 @@ Outdoortemperature & Colours:
     green: connecting
 
 Optional: Send the measured DHT Data to an MQTT Broker
+    
+    receive Data:
+    temperature: stat/openWeather/Temperatur
+    Humidity: stat/openWeather/Feuchtigkeit
+    HeatIndex: stat/openWeather/HeatIndex
+    
+    controll openWeather:
+    light on: cmnd/openWeather/power - payload on
+    light off: cmnd/openWeather/power - payload off
+    switch to party mode: cmnd/openWeather/state - PixelParty1 or PixelParty2
+    
+    upon receiving a command it sends back on stat/openWeather/power and stat/openWeather/state which mode it is in.
+    
+Dependencies:
+
+    PubSubClient
+    ArduinoJson
+    ESP8266 Libs
+    ESP32 Libs
+    DHT Sensor library for ESPx
+    
+To Do: Captive Portal with interface for changing mqtt and wifi settings
