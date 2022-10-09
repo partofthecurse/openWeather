@@ -95,14 +95,14 @@
 int GcolourR, GcolourG, GcolourB, Gposition;
 
 // Please Change to your WIFI-Credentials
-const char* ssid = "FRITZ!Box 6660 Cable YE";
-const char* password = "39980794038875361052";
+const char* ssid = "SSID";
+const char* password = "PW";
 
 //What citiy you want to receive the weather from?
 const char* city = "Munich,de";  //City and Country like this Oldenburg,de
 
 //Here please add your Open Weathermap API Key from https://home.openweathermap.org/api_keys
-const char* openWeatherAPI = "afdb4e27bb54b70acf87b759319023ea";
+const char* openWeatherAPI = "API-KEY";
 
 //What units do you use?
 const char* unitSystem = "metric";
@@ -123,9 +123,9 @@ Adafruit_NeoPixel pixels(NUMPIXELS, LEDPIN, NEO_GRB + NEO_KHZ800);  //build the 
 
 bool mqttConnected = false;
 
-const char* mqttServer = "192.168.178.33";
+const char* mqttServer = "192.168.XXX.XX";
 const char* mqttUsername = "mqtt-user";
-const char* mqttPassword = "Sc13nc3B1tch";
+const char* mqttPassword = "PW";
 const char* mqttDeviceId = "openWeather";  //you can pick any name here
 
 //i use something quite similar to tasmota, but feel free to change
