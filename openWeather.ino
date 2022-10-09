@@ -53,63 +53,72 @@
 //Do you want to use DHT?
 #define USEDHT
 
-//Do you use ESP8266 or ESP32?
+//Do you use ESP8266 or ESP32? -> Switch to the correct one, if needed
 #define ESP8266
 
 //Do you want to use Serial Monitor for Debugging?
 #define DEBUGING
 
+//Which Board?
+
 #ifdef ESP8266
-#include <ESP8266WiFi.h> // for WiFi functionality
-#include <ESP8266HTTPClient.h> //for the API-Request
+#include <ESP8266WiFi.h>        // for WiFi functionality
+#include <ESP8266HTTPClient.h>  //for the API-Request
 #endif
 
 #ifdef ESP32
-#include <WiFi.h> //in case you are on esp32 we switch to this line
+#include <WiFi.h>  //in case you are on esp32 we switch to this line
 #include <HTTPClient.h>
 #endif
 
+//Colours and Position
+int GcolourR, GcolourG, GcolourB, Gposition;
+
 // Please Change to your WIFI-Credentials
-const char* ssid = "YOUR WIFI";
-const char* password = "YOUR PW";
+const char* ssid = "FRITZ!Box 6660 Cable YE";
+const char* password = "39980794038875361052";
 
 //What citiy you want to receive the weather from?
-const char* city = "Oldenburg,de"; //City and Country like this Oldenburg,de
+const char* city = "Munich,de";  //City and Country like this Oldenburg,de
 
 //Here please add your Open Weathermap API Key from https://home.openweathermap.org/api_keys
-const char* openWeatherAPI = "YOUR API";
+const char* openWeatherAPI = "afdb4e27bb54b70acf87b759319023ea";
 
 //What units do you use?
 const char* unitSystem = "metric";
 
-#include <ArduinoJson.h> //JSON String conversion for Open Weathermap API Request
+#include <ArduinoJson.h>  //JSON String conversion for Open Weathermap API Request
 
 // We use Neopixel to Control the WS2812. In my build i use a node mcu esp8266 and pin d8 to drive the pixels
 #include <Adafruit_NeoPixel.h>
 
-#define LEDPIN D8 //neopixels to pin d8
-#define NUMPIXELS 4 // My Vesion has 4 Pixels
+#define LEDPIN D8    //neopixels to pin d8
+#define NUMPIXELS 4  // My Vesion has 4 Pixels
 
-Adafruit_NeoPixel pixels(NUMPIXELS, LEDPIN, NEO_GRB + NEO_KHZ800); //build the neopixel constructor
+Adafruit_NeoPixel pixels(NUMPIXELS, LEDPIN, NEO_GRB + NEO_KHZ800);  //build the neopixel constructor
 
 //--- MQTT ---
 #ifdef USEMQTT
 #include <PubSubClient.h>
 
-const char* mqttServer = "YOUR MQTT IP";
-const char* mqttUsername = "MQTT USERNAME";
-const char* mqttPassword = "YOUR PSK";
-const char* mqttDeviceId = "openWeather"; //you can pick any name here
+bool mqttConnected = false;
+
+const char* mqttServer = "192.168.178.33";
+const char* mqttUsername = "mqtt-user";
+const char* mqttPassword = "Sc13nc3B1tch";
+const char* mqttDeviceId = "openWeather";  //you can pick any name here
 
 //i use something quite similar to tasmota, but feel free to change
-const char* subTopic = "cmnd/openWeather/command";
+const char* subTopic = "cmnd/openWeather/state";
+const char* subTopic1 = "cmnd/openWeather/power";
 const char* temperatureTopic = "stat/openWeather/Temperatur";
-const char* humidityTopic = "stat/openWeather/Feuchtigkeit" ;
+const char* humidityTopic = "stat/openWeather/Feuchtigkeit";
 const char* heatIndexTopic = "stat/openWeather/HeatIndex";
 unsigned long lastMsg = 0;
 
 WiFiClient openWeather;
-PubSubClient client(openWeather);
+PubSubClient MQTTclient(openWeather);
+void callback(char* topic, byte* message, unsigned int length);
 #endif
 
 //--- DHT ---
@@ -123,13 +132,13 @@ float temperature, humidity, heatIndex;
 #endif
 
 //--- Timer Stuff ---
-unsigned long previousMillisMes; //previous timer time
-unsigned long previousMillisPub; //
+unsigned long previousMillisMes;  //previous timer time
+unsigned long previousMillisPub;  //
 unsigned long previousMillisReq;
 
-const unsigned long measureIntervall = 500; //update sensor every 500ms
-const unsigned long publishIntervall = 5000; //publish mqtt every 5 sekonds
-const unsigned long requestIntervall = 3600000; //drive http request every hour
+const unsigned long measureIntervall = 500;      //update sensor every 500ms
+const unsigned long publishIntervall = 5000;     //publish mqtt every 5 sekonds
+const unsigned long requestIntervall = 3600000;  //drive http request every hour
 
 int modus = 0;
 bool firstloop = true;
@@ -148,49 +157,78 @@ void setup() {
 #endif
 
   //--Neopixel
-  pixels.begin(); // INITIALIZE NeoPixel strip object
-  pixels.clear(); // Set all pixel colors to 'off'
+  pixels.begin();  // INITIALIZE NeoPixel strip object
+  pixels.clear();  // Set all pixel colors to 'off'
 
   //--Wifi
   setup_wifi();
 
   //--MQTT
 #ifdef USEMQTT
-  client.setServer(mqttServer, 1883);
-  client.setCallback(callback);
+  MQTTclient.setServer(mqttServer, 1883);
+#ifdef DEBUGING
+  Serial.println("MQTT Setup: active");
+#endif
+  MQTTclient.setCallback(callback);
+#ifdef DEBUGING
+  Serial.println("MQTT Setup: callback function set");
+#endif
+  MQTTclient.subscribe(subTopic);
+#ifdef DEBUGING
+  Serial.println("MQTT Setup: subscribed to subTopic");
+#endif
+  MQTTclient.setKeepAlive(90);
+#ifdef DEBUGING
+  Serial.println("MQTT Setup: set KeepAlive to 90");
+#endif
+  reconnect();  //establish connection to mqtt server
+#ifdef DEBUGING
+  Serial.println("MQTT Setup: finished");
+#endif
 #endif
 
   //--DHT
 #ifdef USEDHT
-  dht.setup(DHTPIN, DHTesp::DHT22); // Connect DHT sensor to GPIO 17
+  dht.setup(DHTPIN, DHTesp::DHT22);  // Connect DHT sensor to GPIO 17
+#ifdef DEBUGING
+  Serial.println("DHT Setup: Sensor connected to GPIO");
 #endif
-
-}
+#endif
+}  // end of void setup
 
 //--- ARDUINO LOOP ---
 
 void loop() {
 #ifdef DEBUGING
   Serial.println("void loop: Started... ");
+  Serial.print("Wifi Connected: ");
+  if ((WiFi.status() == WL_CONNECTED)) {
+    Serial.println("true");
+  } else {
+    Serial.println("false");
+  }
+  Serial.print("MQTT Connected: ");
+  if ((MQTTclient.state() == 0)) {
+    Serial.println("true");
+  } else {
+    Serial.println("false");
+  }
 #endif
 
-  if (!client.connected()) {
+  if ((!MQTTclient.state() == 0)) {
     reconnect();
-#ifdef DEBUGING
-    Serial.println("void loop: Lost MQTT... ");
-#endif
   }
-  client.loop();
+
 
 #ifdef DEBUGING
   Serial.print("void loop: Modus: ");
   Serial.println(modus);
 #endif
 
-//if we are in the first loop, we already want to fetch the weather data, afterwards only every hour
+  //if we are in the first loop, we already want to fetch the weather data, afterwards only every hour
   if (firstloop) {
     getWeather();
-    firstloop=false;
+    firstloop = false;
   }
 
   //get Weatherdata
@@ -219,7 +257,24 @@ void loop() {
   if (modus == 2) {
     rainbowFade(3, 3, 1);
   }
-
+  //keep mqtt connection alive
+  if (MQTTclient.loop()) {
+#ifdef DEBUGING
+    Serial.println("MQTT Client.loop called successfull");
+#endif
+  } else {
+#ifdef DEBUGING
+    Serial.println("MQTT Client.loop call failed");
+#endif
+  }
+  if (modus == 3) {
+    pixels.clear();
+    pixels.show();
+  }
+  if (modus == 0) {
+    pixels.clear();
+    showWeather();
+  }
 }
 
 //--- CUSTOM CLASSES ---
@@ -245,15 +300,15 @@ void setup_wifi() {
 #endif
 
     //Signal wifi connecting with green animation
-    for (int i = 0; i < NUMPIXELS; i++) { // For each pixel...
+    for (int i = 0; i < NUMPIXELS; i++) {  // For each pixel...
 
       // pixels.Color() takes RGB values, from 0,0,0 up to 255,255,255
       // Here we're using a moderately bright green color:
       pixels.setPixelColor(i, pixels.Color(0, 255, 0));
 
-      pixels.show();   // Send the updated pixel colors to the hardware.
+      pixels.show();  // Send the updated pixel colors to the hardware.
 
-      delay(500); // Pause before next pass through loop
+      delay(500);  // Pause before next pass through loop
     }
   }
 
@@ -269,39 +324,53 @@ void setup_wifi() {
 #ifdef USEMQTT
 void reconnect() {
   // Loop until we're reconnected
+
 #ifdef DEBUGING
-  Serial.println("reconnect: ");
+  Serial.println("MQTT reconnect: ");
 #endif
 
-  while (!client.connected()) {
+  while (!MQTTclient.connected()) {
 #ifdef DEBUGING
-    Serial.println("Attempting MQTT connection...");
+    Serial.println("MQTT reconnect: Attempting MQTT connection...");
 #endif
-    pixels.clear();
-    for (int i = 0; i < NUMPIXELS; i++) { // For each pixel...
+    // pixels.clear();
+    // for (int i = 0; i < NUMPIXELS; i++) {  // For each pixel...
 
-      // pixels.Color() takes RGB values, from 0,0,0 up to 255,255,255
-      // Here we're using a moderately bright green color:
-      pixels.setPixelColor(i, pixels.Color(0, 0, 255));
+    //   // pixels.Color() takes RGB values, from 0,0,0 up to 255,255,255
+    //   // Here we're using a moderately bright green color:
+    //   pixels.setPixelColor(i, pixels.Color(0, 0, 255));
 
-      pixels.show();   // Send the updated pixel colors to the hardware.
+    //   pixels.show();  // Send the updated pixel colors to the hardware.
 
-      delay(500); // Pause before next pass through loop
-    }
+    //   delay(500);  // Pause before next pass through loop
+    // }
 
 
     // Attempt to connect
-    if (client.connect(mqttDeviceId, mqttUsername, mqttPassword)) {
+    if (MQTTclient.connect(mqttDeviceId, mqttUsername, mqttPassword)) {
+      mqttConnected = true;
+      MQTTclient.loop();
+
+
+      MQTTclient.setCallback(callback);
 #ifdef DEBUGING
-      Serial.println("connected");
+      Serial.println("MQTT reconnect: callback function set");
+#endif
+      MQTTclient.subscribe(subTopic);
+      MQTTclient.subscribe(subTopic1);
+#ifdef DEBUGING
+      Serial.println("MQTT reconnect: subscribed to subTopic");
 #endif
 
-      client.subscribe(subTopic);
-    } else {
 #ifdef DEBUGING
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
+      Serial.println("MQTT reconnect: connected");
+#endif
+    } else {
+      mqttConnected = false;
+#ifdef DEBUGING
+      Serial.print("MQTT reconnect: failed, rc=");
+      Serial.print(MQTTclient.state());
+      Serial.println(" MQTT reconnect: try again in 5 seconds");
 #endif
 
       // Wait 5 seconds before retrying
@@ -337,28 +406,37 @@ void callback(char* topic, byte* message, unsigned int length) {
 
   // If a message is received on the topic, you check if the message is either "on" or "off".
   // Changes the output state according to the message
-  if (String(topic) == subTopic) {
+  if (String(topic) == subTopic || String(topic) == subTopic1) {
 #ifdef DEBUGING
     Serial.print("Changing output to ");
 #endif
     if (messageTemp == "PixelParty1") {
+      MQTTclient.publish("stat/openWeather/state", "PixelParty1");
 #ifdef DEBUGING
       Serial.println("PixelParty1");
 #endif
       modus = 1;
-    }
-    else if (messageTemp == "PixelParty2") {
+    } else if (messageTemp == "PixelParty2") {
+      MQTTclient.publish("stat/openWeather/state", "PixelParty2");
 #ifdef DEBUGING
       Serial.println("PixelParty2");
 #endif
       modus = 2;
-    }
-    else if (messageTemp == "endParty") {
+    } else if (messageTemp == "off") {
+      MQTTclient.publish("stat/openWeather/power", "off");
+#ifdef DEBUGING
+      Serial.println("Off");
+#endif
+      modus = 3;
+      pixels.clear();
+    } else if (messageTemp == "endParty" || messageTemp == "on") {
+      MQTTclient.publish("stat/openWeather/power", "on");
 #ifdef DEBUGING
       Serial.println("The Party is over");
 #endif
       modus = 0;
-        firstloop = true;
+      pixels.clear();
+      //firstloop = true;
     }
   }
 }
@@ -372,13 +450,28 @@ void publishMQTT() {
 #endif
 
   unsigned long now = millis();
-  if (now - lastMsg > 5000) { //Sending every 5 seconds
+  if (now - lastMsg > 5000) {  //Sending every 5 seconds
     lastMsg = now;
-
-    client.publish(temperatureTopic, String(temperature).c_str());
-    client.publish(humidityTopic, String(humidity).c_str());
-    client.publish(heatIndexTopic, String(heatIndex).c_str());
-
+    if (MQTTclient.state() == 0) {
+      if (MQTTclient.publish(temperatureTopic, String(temperature).c_str())) {
+        Serial.println("Send was Successfull");
+      }
+#ifdef DEBUGING
+      Serial.print("Temperature: ");
+      Serial.println(String(temperature).c_str());
+#endif
+      MQTTclient.publish(humidityTopic, String(humidity).c_str());
+      MQTTclient.publish(heatIndexTopic, String(heatIndex).c_str());
+    } else {
+      MQTTclient.connect(mqttDeviceId, mqttUsername, mqttPassword);
+      if (MQTTclient.publish(temperatureTopic, String(temperature).c_str())) {
+        Serial.println("Send was Successfull");
+      }
+#ifdef DEBUGING
+      Serial.print("Temperature: ");
+      Serial.println(String(temperature).c_str());
+#endif
+    }
   }
 }
 #endif
@@ -386,46 +479,45 @@ void publishMQTT() {
 //-- Get the Weather from Open Weather Map --
 void getWeather() {
   pixels.clear();
-  
 #ifdef DEBUGING
   Serial.println("getWeather: Stelle OpenWeathermap HTTP Request...");
 #endif
 
-  if ((WiFi.status() == WL_CONNECTED)) { //Checks if we are connected to a wifi
+  if ((WiFi.status() == WL_CONNECTED)) {  //Checks if we are connected to a wifi
 #ifdef DEBUGING
     Serial.println("getWeather: Wifi stabil...");
 #endif
 
-    HTTPClient http; //starting an instance of httpclient named http
+    HTTPClient http;  //starting an instance of httpclient named http
 #ifdef DEBUGING
     Serial.println("getWeather: Starte HTTPClient...");
 #endif
 
-    http.begin("http://api.openweathermap.org/data/2.5/weather?q=" + String(city) + "&units=" + String(unitSystem) +"&appid=" + String(openWeatherAPI)); //URL für die Abfrage
+    http.begin(openWeather, "http://api.openweathermap.org/data/2.5/weather?q=" + String(city) + "&units=" + String(unitSystem) + "&appid=" + String(openWeatherAPI));  //URL für die Abfrage
 #ifdef DEBUGING
     Serial.println("getWeather: Verbinde zu URL: ");
     Serial.println("http://api.openweathermap.org/data/2.5/weather?q=" + String(city) + "&units=" + String(unitSystem) + "&appid=" + String(openWeatherAPI));
 #endif
 
-    int httpCode = http.GET(); //get answer from server
+    int httpCode = http.GET();  //get answer from server
 #ifdef DEBUGING
     Serial.print("getWeather: Antwort des Servers: ");
-    Serial.println(httpCode); //print the answer to serial monitor
+    Serial.println(httpCode);  //print the answer to serial monitor
 #endif
 
-    if (httpCode == 200) { //if the answer is 200
+    if (httpCode == 200) {  //if the answer is 200
 
-      String payload = http.getString(); //Store the string from server to string payload on esp
+      String payload = http.getString();  //Store the string from server to string payload on esp
 
       const size_t capacity = JSON_ARRAY_SIZE(1) + 2 * JSON_OBJECT_SIZE(1) + 2 * JSON_OBJECT_SIZE(2) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(14) + 290;
 
-      DynamicJsonDocument doc(capacity); //dynamic switch size for json string buffer
+      DynamicJsonDocument doc(capacity);  //dynamic switch size for json string buffer
 
-      DeserializationError error = deserializeJson(doc, payload); //JSON parsing
+      DeserializationError error = deserializeJson(doc, payload);  //JSON parsing
 
-      http.end(); //End Serverconnection.
+      http.end();  //End Serverconnection.
 
-      if (error) { //Fehlermeldung bei fehlerhafter Verarbeitung
+      if (error) {  //Fehlermeldung bei fehlerhafter Verarbeitung
 #ifdef DEBUGING
         Serial.print(F("deserializeJson() failed: "));
         Serial.println(error.c_str());
@@ -435,14 +527,14 @@ void getWeather() {
 
       //---Temperature LOGIC ---
       JsonObject main = doc["main"];
-      int outdoor_temp = (int)main["temp"]; // Convert data to type INT and store to outdoor_temp
+      int outdoor_temp = (int)main["temp"];  // Convert data to type INT and store to outdoor_temp
 #ifdef DEBUGING
       Serial.print("Received Outdoor Temperature: ");
 
       if (unitSystem == "metric") {
-        Serial.println(String(outdoor_temp) + " °C"); //add a nice little c for celsius
+        Serial.println(String(outdoor_temp) + " °C");  //add a nice little c for celsius
       } else if (unitSystem == "imperial") {
-        Serial.println(String(outdoor_temp) + " °F"); //or F for Fahrenheit
+        Serial.println(String(outdoor_temp) + " °F");  //or F for Fahrenheit
       }
 #endif
 
@@ -491,8 +583,8 @@ void getWeather() {
       }
 
       //--- Weather LOGIC ---
-      JsonObject weather_0 = doc["weather"][0]; //here we figure out which kind of weather we will get
-      int weather_0_id = weather_0["id"];       // Weather-ID
+      JsonObject weather_0 = doc["weather"][0];  //here we figure out which kind of weather we will get
+      int weather_0_id = weather_0["id"];        // Weather-ID
 
 #ifdef DEBUGING
       Serial.print("Received Weather ID: ");
@@ -501,12 +593,14 @@ void getWeather() {
 
       //Cloudy
       if (weather_0_id > 800 && weather_0_id <= 804) {
-        pixels.setPixelColor(1, pixels.Color(colourR, colourG, colourB)); //Set color of Pixel 1 to temperature dependend colour
+        pixels.setPixelColor(1, pixels.Color(colourR, colourG, colourB));  //Set color of Pixel 1 to temperature dependend colour
+        Gposition = 1;
       }
 
       //Different types of Rain
       else if (weather_0_id >= 300 && weather_0_id < 600) {
-        pixels.setPixelColor(2, pixels.Color(colourR, colourG, colourB)); //Set color of Pixel 2 to temperature dependend colour
+        pixels.setPixelColor(2, pixels.Color(colourR, colourG, colourB));  //Set color of Pixel 2 to temperature dependend colour
+        Gposition = 2;
       }
 
       //Thunderstorm
@@ -514,12 +608,14 @@ void getWeather() {
         colourR = 241;
         colourG = 196;
         colourB = 15;
-        pixels.setPixelColor(2, pixels.Color(colourR, colourG, colourB)); //Set color of Pixel 2 to overwritten thunderstorm colour
+        pixels.setPixelColor(2, pixels.Color(colourR, colourG, colourB));  //Set color of Pixel 2 to overwritten thunderstorm colour
+        Gposition = 2;
       }
 
       //Snow
       else if (weather_0_id >= 600 && weather_0_id < 700) {
-        pixels.setPixelColor(3, pixels.Color(colourR, colourG, colourB)); //Set color of Pixel 2 to temperature dependend colour
+        pixels.setPixelColor(3, pixels.Color(colourR, colourG, colourB));  //Set color of Pixel 2 to temperature dependend colour
+        Gposition = 3;
       }
 
       //Atmosphere Stuff (Mist, Dust, and so on) -> setting LED Colour to White
@@ -531,30 +627,42 @@ void getWeather() {
 
       //Weathergroup 800 = Clear Sky
       else if (weather_0_id == 800) {
-        pixels.setPixelColor(0, pixels.Color(colourR, colourG, colourB)); //Clear sky is Pixel 0
+        pixels.setPixelColor(0, pixels.Color(colourR, colourG, colourB));  //Clear sky is Pixel 0
+        Gposition = 0;
       }
 
-    } // End if HTTP Succesfull
+      GcolourR = colourR;
+      GcolourG = colourG;
+      GcolourB = colourB;  //store this in global variables
 
-    pixels.show();   // Send the updated pixel colors to the hardware.
+    }  // End if HTTP Succesfull
 
-  } //End of if (is wifi connected)
+    //pixels.show();  // Send the updated pixel colors to the hardware.
 
-  else { //if we get an error we can signal via an led animation (Red ...)
+  }  //End of if (is wifi connected)
+
+  else {  //if we get an error we can signal via an led animation (Red ...)
 #ifdef DEBUGING
     Serial.println("Error on HTTP request");
 #endif
-    for (int i = 0; i < NUMPIXELS; i++) { // For each pixel...
+    for (int i = 0; i < NUMPIXELS; i++) {  // For each pixel...
 
       // pixels.Color() takes RGB values, from 0,0,0 up to 255,255,255
-      // Here we're using a moderately bright green color:
+      // Here we're using a moderately bright red color:
       pixels.setPixelColor(i, pixels.Color(255, 0, 0));
 
-      pixels.show();   // Send the updated pixel colors to the hardware.
+      pixels.show();  // Send the updated pixel colors to the hardware.
 
-      delay(500); // Pause before next pass through loop
+      delay(500);  // Pause before next pass through loop
     }
   }
+}
+
+//---SHOW WEATHER
+void showWeather() {
+  pixels.setPixelColor(Gposition, pixels.Color(GcolourR, GcolourG, GcolourB));
+
+  pixels.show();  // Send the updated pixel colors to the hardware.
 }
 
 //--- DHT ---
@@ -569,17 +677,17 @@ void getDHT() {
 
 //--- Fun Stuff (from neopixel example) ---
 void pixelParty() {
-  colorWipe(pixels.Color(255,   0,   0)     , 50); // Red
-  colorWipe(pixels.Color(  0, 255,   0)     , 50); // Green
-  colorWipe(pixels.Color(  0,   0, 255)     , 50); // Blue
-  colorWipe(pixels.Color(  0,   0,   0, 255), 50); // True white (not RGB white)
+  colorWipe(pixels.Color(255, 0, 0), 50);     // Red
+  colorWipe(pixels.Color(0, 255, 0), 50);     // Green
+  colorWipe(pixels.Color(0, 0, 255), 50);     // Blue
+  colorWipe(pixels.Color(0, 0, 0, 255), 50);  // True white (not RGB white)
 }
 
 void colorWipe(uint32_t color, int wait) {
-  for (int i = 0; i < pixels.numPixels(); i++) { // For each pixel in strip...
-    pixels.setPixelColor(i, color);         //  Set pixel's color (in RAM)
-    pixels.show();                          //  Update strip to match
-    delay(wait);                           //  Pause for a moment
+  for (int i = 0; i < pixels.numPixels(); i++) {  // For each pixel in strip...
+    pixels.setPixelColor(i, color);               //  Set pixel's color (in RAM)
+    pixels.show();                                //  Update strip to match
+    delay(wait);                                  //  Pause for a moment
   }
 }
 
@@ -593,7 +701,7 @@ void rainbowFade(int wait, int rainbowLoops, int whiteLoops) {
   for (uint32_t firstPixelHue = 0; firstPixelHue < rainbowLoops * 65536;
        firstPixelHue += 256) {
 
-    for (int i = 0; i < pixels.numPixels(); i++) { // For each pixel in strip...
+    for (int i = 0; i < pixels.numPixels(); i++) {  // For each pixel in strip...
 
       // Offset pixel hue by an amount to make one full revolution of the
       // color wheel (range of 65536) along the length of the strip
@@ -605,29 +713,29 @@ void rainbowFade(int wait, int rainbowLoops, int whiteLoops) {
       // Here we're using just the three-argument variant, though the
       // second value (saturation) is a constant 255.
       pixels.setPixelColor(i, pixels.gamma32(pixels.ColorHSV(pixelHue, 255,
-                                             255 * fadeVal / fadeMax)));
+                                                             255 * fadeVal / fadeMax)));
     }
 
     pixels.show();
     delay(wait);
 
-    if (firstPixelHue < 65536) {                             // First loop,
-      if (fadeVal < fadeMax) fadeVal++;                      // fade in
-    } else if (firstPixelHue >= ((rainbowLoops - 1) * 65536)) { // Last loop,
-      if (fadeVal > 0) fadeVal--;                            // fade out
+    if (firstPixelHue < 65536) {                                 // First loop,
+      if (fadeVal < fadeMax) fadeVal++;                          // fade in
+    } else if (firstPixelHue >= ((rainbowLoops - 1) * 65536)) {  // Last loop,
+      if (fadeVal > 0) fadeVal--;                                // fade out
     } else {
-      fadeVal = fadeMax; // Interim loop, make sure fade is at max
+      fadeVal = fadeMax;  // Interim loop, make sure fade is at max
     }
   }
 
   for (int k = 0; k < whiteLoops; k++) {
-    for (int j = 0; j < 256; j++) { // Ramp up 0 to 255
+    for (int j = 0; j < 256; j++) {  // Ramp up 0 to 255
       // Fill entire strip with white at gamma-corrected brightness level 'j':
       pixels.fill(pixels.Color(0, 0, 0, pixels.gamma8(j)));
       pixels.show();
     }
-    delay(1000); // Pause 1 second
-    for (int j = 255; j >= 0; j--) { // Ramp down 255 to 0
+    delay(1000);                      // Pause 1 second
+    for (int j = 255; j >= 0; j--) {  // Ramp down 255 to 0
       pixels.fill(pixels.Color(0, 0, 0, pixels.gamma8(j)));
       pixels.show();
     }
