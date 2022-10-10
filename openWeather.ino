@@ -40,13 +40,13 @@
     Red: Wifi related error
     green: connecting
 
-    Optional: Send the measured DHT Data to an MQTT Broker
+    Optional: Send the measured DHT Data to an MQTT Broker (topics are customizable within captive portal)
     receive Data:
     temperature: stat/openWeather/Temperatur
     Humidity: stat/openWeather/Feuchtigkeit
     HeatIndex: stat/openWeather/HeatIndex
     
-    controll openWeather:
+    control openWeather:
     light on: cmnd/openWeather/power - payload on
     light off: cmnd/openWeather/power - payload off
     switch to party mode: cmnd/openWeather/state - PixelParty1 or PixelParty2
@@ -59,8 +59,11 @@
     ESP8266 Libs
     ESP32 Libs
     DHT Sensor library for ESPx
-    
-    To Do: Captive Portal with interface for changing mqtt and wifi settings
+    WifiManager
+    LittleFS
+
+    Now with Wifi Manager or HardCoded Wifi credentials optional.
+    Thanks to https://github.com/CurlyWurly-1/ESP8266-WIFIMANAGER-MQTT/blob/master/MQTT_with_WiFiManager.ino
 
     Made By Daniel Strohbach www.daniel-strohbach.de/
 */
@@ -69,6 +72,10 @@
 
 //Do you want to use MQTT?
 #define USEMQTT
+
+//Do you want to use Managed WIFI or Hardcoded Wifi?
+#define USEWIFIMANAGER
+// #define USEWIFI //if so, do not forget to enter your credentials in line 116/117
 
 //Do you want to use DHT?
 #define USEDHT
@@ -84,25 +91,39 @@
 #ifdef ESP8266
 #include <ESP8266WiFi.h>        // for WiFi functionality
 #include <ESP8266HTTPClient.h>  //for the API-Request
+#include <ESP8266WebServer.h>
+//#include "SPIFFS.h"
+#include <LittleFS.h>  //for ESP82
+#define SPIFFS LittleFS
 #endif
 
 #ifdef ESP32
 #include <WiFi.h>  //in case you are on esp32 we switch to this line
 #include <HTTPClient.h>
+#include <ESP32WebServer.h>
+//#include "SPIFFS.h"
+#include <LITTLEFS.h>  //for ESP32
+#define SPIFFS LITTLEFS
 #endif
+
+//WIfi-Manager and Captive Portal
+#include <DNSServer.h>
+#include <WiFiManager.h>  // https://github.com/tzapu/WiFiManager
 
 //Colours and Position
 int GcolourR, GcolourG, GcolourB, Gposition;
 
 // Please Change to your WIFI-Credentials
+#ifdef USEWIFI
 const char* ssid = "SSID";
 const char* password = "PW";
+#endif
 
 //What citiy you want to receive the weather from?
 const char* city = "Munich,de";  //City and Country like this Oldenburg,de
 
 //Here please add your Open Weathermap API Key from https://home.openweathermap.org/api_keys
-const char* openWeatherAPI = "API-KEY";
+#define openWeatherAPI "API"
 
 //What units do you use?
 const char* unitSystem = "metric";
@@ -117,23 +138,32 @@ const char* unitSystem = "metric";
 
 Adafruit_NeoPixel pixels(NUMPIXELS, LEDPIN, NEO_GRB + NEO_KHZ800);  //build the neopixel constructor
 
+#ifdef USEWIFIMANAGER
+WiFiManager wifiManager;
+#endif
+
 //--- MQTT ---
 #ifdef USEMQTT
 #include <PubSubClient.h>
 
 bool mqttConnected = false;
 
-const char* mqttServer = "192.168.XXX.XX";
-const char* mqttUsername = "mqtt-user";
-const char* mqttPassword = "PW";
-const char* mqttDeviceId = "openWeather";  //you can pick any name here
+//define your default values here, if there are different values in config.json, they are overwritten.
+#define mqttServer "192.168.178.XX"
+#define mqttUsername "mqtt-user"
+#define mqttPassword "PW"
+#define mqttPort "1883"
+#define mqttDeviceID "openWeather"
 
 //i use something quite similar to tasmota, but feel free to change
-const char* subTopic = "cmnd/openWeather/state";
-const char* subTopic1 = "cmnd/openWeather/power";
-const char* temperatureTopic = "stat/openWeather/Temperatur";
-const char* humidityTopic = "stat/openWeather/Feuchtigkeit";
-const char* heatIndexTopic = "stat/openWeather/HeatIndex";
+#define subTopic "cmnd/openWeather/state"
+#define subTopic1 "cmdn/openWeather/power"
+#define resTopic "stat/openWeather/state"
+#define resTopic1 "stat/openWeather/power"
+#define temperatureTopic "stat/openWeather/Temperatur"
+#define humidityTopic "stat/openWeather/Feuchtigkeit"
+#define heatIndexTopic "stat/openWeather/HeatIndex"
+
 unsigned long lastMsg = 0;
 
 WiFiClient openWeather;
@@ -147,7 +177,7 @@ void callback(char* topic, byte* message, unsigned int length);
 #define DHTPIN D4
 DHTesp dht;
 
-//--- Global Variables for Sensor storage---
+//--- Global Variables for Sensor storage--- // not elegant, but it works :)
 float temperature, humidity, heatIndex;
 #endif
 
@@ -163,12 +193,17 @@ const unsigned long requestIntervall = 3600000;  //drive http request every hour
 int modus = 0;
 bool firstloop = true;
 
+//flag for saving data
+bool shouldSaveConfig = false;
+
 //--- ARDUINO SETUP ---
 
 void setup() {
   //Begin serial connection
 #ifdef DEBUGING
   Serial.begin(9600);
+  Serial.println();
+  Serial.println();
 
   //Welcome to Serial Monitor
   Serial.println("openWeather: Erfasse Wetter, Temperatur, Feuchtigkeit on: ");
@@ -180,14 +215,21 @@ void setup() {
   pixels.begin();  // INITIALIZE NeoPixel strip object
   pixels.clear();  // Set all pixel colors to 'off'
 
+#ifdef USEWIFIMANAGER
+  //Wifi-Manager
+  setup_wifimanager();
+#endif
+
+#ifdef USEWIFI
   //--Wifi
   setup_wifi();
+#endif
 
   //--MQTT
 #ifdef USEMQTT
-  MQTTclient.setServer(mqttServer, 1883);
+  MQTTclient.setServer(mqttServer, atoi(mqttPort));
 #ifdef DEBUGING
-  Serial.println("MQTT Setup: active");
+  Serial.println("MQTT Setup: Server and Port are Set to: ");
 #endif
   MQTTclient.setCallback(callback);
 #ifdef DEBUGING
@@ -219,14 +261,17 @@ void setup() {
 //--- ARDUINO LOOP ---
 
 void loop() {
+
 #ifdef DEBUGING
   Serial.println("void loop: Started... ");
   Serial.print("Wifi Connected: ");
+
   if ((WiFi.status() == WL_CONNECTED)) {
     Serial.println("true");
   } else {
     Serial.println("false");
   }
+#ifdef USEMQTT
   Serial.print("MQTT Connected: ");
   if ((MQTTclient.state() == 0)) {
     Serial.println("true");
@@ -234,12 +279,16 @@ void loop() {
     Serial.println("false");
   }
 #endif
+#endif
 
+//if mqtt is not connected, try again
+#ifdef USEMQTT
   if ((!MQTTclient.state() == 0)) {
     reconnect();
   }
+#endif
 
-
+//what mode are we in? (light on or off, party mode or not)
 #ifdef DEBUGING
   Serial.print("void loop: Modus: ");
   Serial.println(modus);
@@ -251,7 +300,7 @@ void loop() {
     firstloop = false;
   }
 
-  //get Weatherdata
+  //get Weatherdata every hour (or what you did custom)
   if (millis() - previousMillisReq >= requestIntervall) {
     previousMillisReq = millis();
     if (modus == 0) {
@@ -259,25 +308,26 @@ void loop() {
     }
   }
 
+//read sensor data
+#ifdef USEDHT
   //read sensor
   if (millis() - previousMillisMes >= measureIntervall) {
     previousMillisMes = millis();
     getDHT();
   }
+#endif
 
+//send the data to mqtt broker
+#ifdef USEMQTT
   //publish to MQTT Broker
   if (millis() - previousMillisPub >= publishIntervall) {
     previousMillisPub = millis();
     publishMQTT();
   }
+#endif
 
-  if (modus == 1) {
-    pixelParty();
-  }
-  if (modus == 2) {
-    rainbowFade(3, 3, 1);
-  }
-  //keep mqtt connection alive
+//keep mqtt connection alive
+#ifdef USEMQTT
   if (MQTTclient.loop()) {
 #ifdef DEBUGING
     Serial.println("MQTT Client.loop called successfull");
@@ -287,18 +337,243 @@ void loop() {
     Serial.println("MQTT Client.loop call failed");
 #endif
   }
-  if (modus == 3) {
+#endif
+
+  //some remote control for different uses - maybe switch case is better?!
+  if (modus == 1) {
+    pixelParty();
+  }
+
+  if (modus == 2) {
+    rainbowFade(3, 3, 1);
+  }
+
+  if (modus == 3) {  //weather icon is off
     pixels.clear();
     pixels.show();
   }
-  if (modus == 0) {
+
+  if (modus == 0) {  // weather icon is on again
     pixels.clear();
     showWeather();
   }
-}
+
+}  //end of void loop
 
 //--- CUSTOM CLASSES ---
-//--Wifi
+
+//--callback notifying us of the need to save config
+void saveConfigCallback() {
+  Serial.println("Should save config");
+  shouldSaveConfig = true;
+}
+
+//------------------------Wifi-Manager-----------------------------
+#ifdef USEWIFIMANAGER
+void setup_wifimanager() {
+
+//clean FS for testing
+//  SPIFFS.format();
+
+//read configuration from FS json
+#ifdef DEBUGING
+  Serial.println("mounting FS...");
+#endif
+
+  if (SPIFFS.begin()) {
+#ifdef DEBUGING
+    Serial.println("mounted file system");
+#endif
+    if (SPIFFS.exists("/config.json")) {
+//file exists, reading and loading
+#ifdef DEBUGING
+      Serial.println("reading config file");
+#endif
+      File configFile = SPIFFS.open("/config.json", "r");
+      if (configFile) {
+#ifdef DEBUGING
+        Serial.println("opened config file");
+#endif
+        size_t size = configFile.size();
+        // Allocate a buffer to store contents of the file.
+        std::unique_ptr<char[]> buf(new char[size]);
+
+        configFile.readBytes(buf.get(), size);
+        DynamicJsonDocument doc(2048);
+        deserializeJson(doc, buf.get());
+        auto error = serializeJson(doc, Serial);
+        if (!error) {
+#ifdef DEBUGING
+          Serial.println("\nparsed json");
+#endif
+          strcpy(mqttServer, doc["mqttServer"]);
+          strcpy(mqttPort, doc["mqttPort"]);
+          strcpy(mqttUsername, doc["mqttUsername"]);
+          strcpy(mqttPassword, doc["mqttPassword"]);
+          strcpy(mqttDeviceID, doc["mqttDeviceID"]);
+          strcpy(openWeatherAPI, doc["openWeatherAPI"]);
+          strcpy(subTopic, doc["subTopic"]);
+          strcpy(subTopic1, doc["subTopic1"]);
+          strcpy(resTopic, doc["resTopic"]);
+          strcpy(resTopic1, doc["resTopic1"]);
+          strcpy(temperatureTopic, doc["temperatureTopic"]);
+          strcpy(humidityTopic, doc["humidityTopic"]);
+          strcpy(heatIndexTopic, doc["heatIndexTopic"]);
+
+        } else {
+#ifdef DEBUGING
+          Serial.println("failed to load json config");
+#endif
+        }
+      }
+    }
+  } else {
+#ifdef DEBUGING
+    Serial.println("failed to mount FS");
+#endif
+  }
+  //end read
+
+  // The extra parameters to be configured (can be either global or just in the setup)
+  // After connecting, parameter.getValue() will get you the configured value
+  // id/name placeholder/prompt default length
+  WiFiManagerParameter custom_mqttServer("server", "mqtt server", mqttServer, 100);
+  WiFiManagerParameter custom_mqttPort("port", "mqtt port", mqttPort, 20);
+  WiFiManagerParameter custom_mqttUsername("user", "mqtt user", mqttUsername, 100);
+  WiFiManagerParameter custom_mqttPassword("pass", "mqtt pass", mqttPassword, 100);
+  WiFiManagerParameter custom_mqttDeviceID("deviceID", "mqtt deviceid", mqttDeviceID, 100);
+  WiFiManagerParameter custom_openWeatherAPI("API", "openWeather API", openWeatherAPI, 160);
+
+  WiFiManagerParameter custom_subTopic("Sub", "Sub Topic", subTopic, 100);
+  WiFiManagerParameter custom_subTopic1("Sub1", "Sub Topic1", subTopic1, 100);
+  WiFiManagerParameter custom_resTopic("res", "Res Topic", resTopic, 100);
+  WiFiManagerParameter custom_resTopic1("res1", "Res Topic1", resTopic1, 100);
+  WiFiManagerParameter custom_temperatureTopic("temp", "Temperature Topic", temperatureTopic, 100);
+  WiFiManagerParameter custom_humidityTopic("humid", "Humidity Topic", humidityTopic, 100);
+  WiFiManagerParameter custom_heatIndexTopic("HI", "Heat Index Topic", heatIndexTopic, 100);
+
+  //Wifi-Manager
+  WiFiManager wifiManager;
+  //wifiManager.autoConnect("openWeather-AP");
+
+  //Reset Wifi settings for testing
+  // wifiManager.resetSettings();
+
+  //set config save notify callback
+  wifiManager.setSaveConfigCallback(saveConfigCallback);
+
+  //add all your parameters here
+  wifiManager.addParameter(&custom_mqttServer);
+  wifiManager.addParameter(&custom_mqttPort);
+  wifiManager.addParameter(&custom_mqttUsername);
+  wifiManager.addParameter(&custom_mqttPassword);
+  wifiManager.addParameter(&custom_mqttDeviceID);
+  wifiManager.addParameter(&custom_openWeatherAPI);
+  wifiManager.addParameter(&custom_subTopic);
+  wifiManager.addParameter(&custom_subTopic1);
+  wifiManager.addParameter(&custom_resTopic);
+  wifiManager.addParameter(&custom_resTopic1);
+  wifiManager.addParameter(&custom_temperatureTopic);
+  wifiManager.addParameter(&custom_humidityTopic);
+  wifiManager.addParameter(&custom_heatIndexTopic);
+
+
+
+  //reset settings - for testing
+  // wifiManager.resetSettings();
+
+  //set minimum quality of signal so it ignores AP's under that quality
+  //defaults to 8%
+  //wifiManager.setMinimumSignalQuality();
+
+  //sets timeout until configuration portal gets turned off
+  //useful to make it all retry or go to sleep
+  //in seconds
+  //wifiManager.setTimeout(120);
+  //little animation to signal whats going on
+
+
+  //Signal wifi connecting with green animation
+  for (int i = 0; i < NUMPIXELS; i++) {  // For each pixel...
+
+    // pixels.Color() takes RGB values, from 0,0,0 up to 255,255,255
+    // Here we're using a moderately bright green color:
+    pixels.setPixelColor(i, pixels.Color(0, 255, 0));
+
+    pixels.show();  // Send the updated pixel colors to the hardware.
+
+    delay(500);  // Pause before next pass through loop
+  }
+
+
+  //fetches ssid and pass and tries to connect
+  //if it does not connect it starts an access point with the specified name
+  //and goes into a blocking loop awaiting configuration
+  if (!wifiManager.autoConnect("openWeather-Accesspoint")) {
+    Serial.println("failed to connect and hit timeout");
+    delay(3000);
+    //reset and try again, or maybe put it to deep sleep
+    ESP.reset();
+    delay(5000);
+  }
+
+  //if you get here you have connected to the WiFi
+  Serial.println("connected to wifi: ");
+  //read updated parameters
+  strcpy(mqttServer, custom_mqttServer.getValue());
+  strcpy(mqttPort, custom_mqttPort.getValue());
+  strcpy(mqttUsername, custom_mqttUsername.getValue());
+  strcpy(mqttPassword, custom_mqttPassword.getValue());
+  strcpy(mqttDeviceID, custom_mqttDeviceID.getValue());
+  strcpy(openWeatherAPI, custom_openWeatherAPI.getValue());
+
+  strcpy(subTopic, custom_subTopic.getValue());
+  strcpy(subTopic1, custom_subTopic1.getValue());
+  strcpy(resTopic, custom_resTopic.getValue());
+  strcpy(resTopic1, custom_resTopic1.getValue());
+  strcpy(temperatureTopic, custom_temperatureTopic.getValue());
+  strcpy(humidityTopic, custom_temperatureTopic.getValue());
+  strcpy(heatIndexTopic, custom_heatIndexTopic.getValue());
+
+  //save the custom parameters to FS
+  if (shouldSaveConfig) {
+    Serial.println("saving config: ");
+    DynamicJsonDocument json(1024);
+
+    json["mqttServer"] = mqttServer;
+    json["mqttPort"] = mqttPort;
+    json["mqttUsername"] = mqttUsername;
+    json["mqttPassword"] = mqttPassword;
+    json["mqttDeviceID"] = mqttDeviceID;
+    json["openWeatherAPI"] = openWeatherAPI;
+
+    json["subTopic"] = subTopic;
+    json["subTopic1"] = subTopic1;
+    json["resTopic"] = resTopic;
+    json["resTopic1"] = resTopic1;
+    json["temperatureTopic"] = temperatureTopic;
+    json["humidityTopic"] = humidityTopic;
+    json["heatIndexTopic"] = heatIndexTopic;
+
+    File configFile = SPIFFS.open("/config.json", "w");
+    if (!configFile) {
+      Serial.println("failed to open config file for writing");
+    }
+
+    serializeJson(json, Serial);
+    serializeJson(json, configFile);
+    configFile.close();
+    //end save
+  }
+#ifdef DEBUGING
+  Serial.print("local ip: ");
+  Serial.println(WiFi.localIP());
+#endif
+}
+#endif
+
+//--------------------------------------------Wifi------------------------------------
+#ifdef USEWIFI
 void setup_wifi() {
 #ifdef DEBUGING
   Serial.println("setup_wifi: Started... ");
@@ -312,25 +587,18 @@ void setup_wifi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+  //Signal wifi connecting with green animation
+  for (int i = 0; i < NUMPIXELS; i++) {  // For each pixel...
 
-#ifdef DEBUGING
-    Serial.print(".");
-#endif
+    // pixels.Color() takes RGB values, from 0,0,0 up to 255,255,255
+    // Here we're using a moderately bright green color:
+    pixels.setPixelColor(i, pixels.Color(0, 255, 0));
 
-    //Signal wifi connecting with green animation
-    for (int i = 0; i < NUMPIXELS; i++) {  // For each pixel...
+    pixels.show();  // Send the updated pixel colors to the hardware.
 
-      // pixels.Color() takes RGB values, from 0,0,0 up to 255,255,255
-      // Here we're using a moderately bright green color:
-      pixels.setPixelColor(i, pixels.Color(0, 255, 0));
-
-      pixels.show();  // Send the updated pixel colors to the hardware.
-
-      delay(500);  // Pause before next pass through loop
-    }
+    delay(500);  // Pause before next pass through loop
   }
+
 
 #ifdef DEBUGING
   Serial.println("");
@@ -339,6 +607,7 @@ void setup_wifi() {
   Serial.println(WiFi.localIP());
 #endif
 }
+#endif
 
 //----------------------------------- RECONNECT MQTT ---------------------
 #ifdef USEMQTT
@@ -348,11 +617,25 @@ void reconnect() {
 #ifdef DEBUGING
   Serial.println("MQTT reconnect: ");
 #endif
+  int errorcounter = 0;
 
   while (!MQTTclient.connected()) {
 #ifdef DEBUGING
     Serial.println("MQTT reconnect: Attempting MQTT connection...");
+    Serial.println("Credentials:");
+    Serial.print("MQTT Server: ");
+    Serial.println(mqttServer);
+    Serial.print("MQTT Port: ");
+    Serial.println(mqttPort);
+    Serial.print("MQTT Username: ");
+    Serial.println(mqttUsername);
+    Serial.print("MQTT Password: ");
+    Serial.println(mqttPassword);
+    Serial.print("MQTT DeviceID: ");
+    Serial.println(mqttDeviceID);
 #endif
+
+    //connection animation - did cause some errors
     // pixels.clear();
     // for (int i = 0; i < NUMPIXELS; i++) {  // For each pixel...
 
@@ -367,17 +650,22 @@ void reconnect() {
 
 
     // Attempt to connect
-    if (MQTTclient.connect(mqttDeviceId, mqttUsername, mqttPassword)) {
+    if (MQTTclient.connect(mqttDeviceID, mqttUsername, mqttPassword)) {
       mqttConnected = true;
+      //keep alive
       MQTTclient.loop();
 
-
+      //connect callback function
       MQTTclient.setCallback(callback);
+
 #ifdef DEBUGING
       Serial.println("MQTT reconnect: callback function set");
 #endif
+
+      //subscribe to command topics
       MQTTclient.subscribe(subTopic);
       MQTTclient.subscribe(subTopic1);
+
 #ifdef DEBUGING
       Serial.println("MQTT reconnect: subscribed to subTopic");
 #endif
@@ -385,8 +673,10 @@ void reconnect() {
 #ifdef DEBUGING
       Serial.println("MQTT reconnect: connected");
 #endif
+
     } else {
       mqttConnected = false;
+
 #ifdef DEBUGING
       Serial.print("MQTT reconnect: failed, rc=");
       Serial.print(MQTTclient.state());
@@ -395,6 +685,16 @@ void reconnect() {
 
       // Wait 5 seconds before retrying
       delay(5000);
+      errorcounter++;
+
+      if (errorcounter = 5) {
+        errorcounter = 0;
+#ifdef DEBUGING
+        Serial.println("5 Wrong tries, resetting to AP Mode...");
+#endif
+        wifiManager.resetSettings();
+        ESP.reset();
+      }
     }
   }
 }
@@ -483,7 +783,7 @@ void publishMQTT() {
       MQTTclient.publish(humidityTopic, String(humidity).c_str());
       MQTTclient.publish(heatIndexTopic, String(heatIndex).c_str());
     } else {
-      MQTTclient.connect(mqttDeviceId, mqttUsername, mqttPassword);
+      MQTTclient.connect(mqttDeviceID, mqttUsername, mqttPassword);
       if (MQTTclient.publish(temperatureTopic, String(temperature).c_str())) {
         Serial.println("Send was Successfull");
       }
@@ -656,6 +956,19 @@ void getWeather() {
       GcolourB = colourB;  //store this in global variables
 
     }  // End if HTTP Succesfull
+    else if (httpCode == 401) {
+#ifdef DEBUGING
+      Serial.println("401 - not found - maybe a typo in your api?");
+#endif
+      for (int i = 0; i < NUMPIXELS; i++) {  // For each pixel...
+
+        // pixels.Color() takes RGB values, from 0,0,0 up to 255,255,255
+        // Here we're using a moderately bright red color:
+        pixels.setPixelColor(i, pixels.Color(255, 0, 0));
+
+        pixels.show();  // Send the updated pixel colors to the hardware.
+      }
+    }
 
     //pixels.show();  // Send the updated pixel colors to the hardware.
 
