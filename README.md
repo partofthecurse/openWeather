@@ -23,7 +23,7 @@ Connect DHT22 / DHT11 to
     GND - -
     D4  - OUT
 
-Pixel-ID Icon reference (take care when assembling or switch in the code
+Pixel-ID Icon reference (take care when assembling or switch in the code)
 
     0 - clear sky
     1 - cloudy
@@ -39,10 +39,10 @@ Outdoortemperature & Colours:
     Thunderstorm: Yellow
     Fog: White
 
-    Red: Wifi related error
+    Red: error
     green: connecting
 
-Optional: Send the measured DHT Data to an MQTT Broker
+Optional: Send the measured DHT Data to an MQTT Broker (topics are customizable in captive portal)
     
     receive Data:
     temperature: stat/openWeather/Temperatur
@@ -63,5 +63,7 @@ Dependencies:
     ESP8266 Libs
     ESP32 Libs
     DHT Sensor library for ESPx
+    WifiManager
+    LittleFS
     
-To Do: Captive Portal with interface for changing mqtt and wifi settings
+Now with WifiManager
