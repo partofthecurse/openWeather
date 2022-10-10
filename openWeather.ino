@@ -157,7 +157,7 @@ bool mqttConnected = false;
 
 //i use something quite similar to tasmota, but feel free to change
 #define subTopic "cmnd/openWeather/state"
-#define subTopic1 "cmdn/openWeather/power"
+#define subTopic1 "cmnd/openWeather/power"
 #define resTopic "stat/openWeather/state"
 #define resTopic1 "stat/openWeather/power"
 #define temperatureTopic "stat/openWeather/Temperatur"
