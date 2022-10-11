@@ -532,7 +532,7 @@ void setup_wifimanager() {
   strcpy(resTopic, custom_resTopic.getValue());
   strcpy(resTopic1, custom_resTopic1.getValue());
   strcpy(temperatureTopic, custom_temperatureTopic.getValue());
-  strcpy(humidityTopic, custom_temperatureTopic.getValue());
+  strcpy(humidityTopic, custom_humidityTopic.getValue());
   strcpy(heatIndexTopic, custom_heatIndexTopic.getValue());
 
   //save the custom parameters to FS
