@@ -685,15 +685,18 @@ void reconnect() {
 
       // Wait 5 seconds before retrying
       delay(5000);
-      errorcounter++;
+      if (MQTTclient.state() == 2 || MQTTclient.state() == 3 || MQTTclient.state() == 4 || MQTTclient.state() == 5) {
 
-      if (errorcounter = 5) {
-        errorcounter = 0;
+        errorcounter++;
+
+        if (errorcounter = 5) {
+          errorcounter = 0;
 #ifdef DEBUGING
-        Serial.println("5 Wrong tries, resetting to AP Mode...");
+          Serial.println("5 Wrong tries, resetting to AP Mode...");
 #endif
-        wifiManager.resetSettings();
-        ESP.reset();
+          wifiManager.resetSettings();
+          ESP.reset();
+        }
       }
     }
   }
