@@ -3,6 +3,11 @@ Open Source Weather Station that also looks quite nice.
 Concept:
 We are requesting Temperature and Weather ID with an openWeatherMap API Call . Weather is Displayed through Neopixel LEDs under a PMMA-Screen with engraved Icons. Temperature is resembled with LED Colour.
 
+Features:
+    - MQTT
+    - ArduinoOTA
+    - WifiManager & Captive Portal
+
 Parts needed:
 
     - ESP8266 or ESP32 Board, alternatively arduino nano with wifi shield will do as well but not coded here
@@ -66,4 +71,4 @@ Dependencies:
     WifiManager
     LittleFS
     
-Now with WifiManager
+Now with WifiManager and OTA Updates (PW: admin)
