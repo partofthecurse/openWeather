@@ -64,6 +64,8 @@
 
     Now with Wifi Manager or HardCoded Wifi credentials optional.
     Thanks to https://github.com/CurlyWurly-1/ESP8266-WIFIMANAGER-MQTT/blob/master/MQTT_with_WiFiManager.ino
+    
+    Now with OTA Update via ArduinoOTA
 
     Made By Daniel Strohbach www.daniel-strohbach.de/
 */
@@ -110,6 +112,11 @@
 #include <DNSServer.h>
 #include <WiFiManager.h>  // https://github.com/tzapu/WiFiManager
 
+//OTA Updates
+#include <ESP8266mDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
+
 //Colours and Position
 int GcolourR, GcolourG, GcolourB, Gposition;
 
@@ -128,7 +135,7 @@ const char* city = "Munich,de";  //City and Country like this Oldenburg,de
 //What units do you use?
 const char* unitSystem = "metric";
 
-#include <ArduinoJson.h>  //JSON String conversion for Open Weathermap API Request
+#include <ArduinoJson.h>  //JSON String conversion for Open Weathermap API Request and WifiManager
 
 // We use Neopixel to Control the WS2812. In my build i use a node mcu esp8266 and pin d8 to drive the pixels
 #include <Adafruit_NeoPixel.h>
@@ -182,21 +189,28 @@ float temperature, humidity, heatIndex;
 #endif
 
 //--- Timer Stuff ---
-unsigned long previousMillisMes;  //previous timer time
-unsigned long previousMillisPub;  //
-unsigned long previousMillisReq;
+#ifdef USEDHT
+unsigned long previousMillisMes;             //previous timer time
+const unsigned long measureIntervall = 500;  //update sensor every 500ms
+#endif
 
-const unsigned long measureIntervall = 500;      //update sensor every 500ms
-const unsigned long publishIntervall = 5000;     //publish mqtt every 5 sekonds
+#ifdef USEMQTT
+unsigned long previousMillisPub;              //for timer to publish to mqtt broker
+const unsigned long publishIntervall = 5000;  //publish mqtt every 5 sekonds
+#endif
+
+unsigned long previousMillisReq;                 //for timer to request the weather data from openWeathermap
 const unsigned long requestIntervall = 3600000;  //drive http request every hour
 
-int modus = 0;
-bool firstloop = true;
+int modus = 0;          //for different control modes
+bool firstloop = true;  //well, self explanatory
 
 //flag for saving data
+#ifdef USEWIFIMANAGER
 bool shouldSaveConfig = false;
+#endif
 
-//--- ARDUINO SETUP ---
+//---------------------------------------------- ARDUINO SETUP ------------------------------------------------------
 
 void setup() {
   //Begin serial connection
@@ -256,6 +270,62 @@ void setup() {
   Serial.println("DHT Setup: Sensor connected to GPIO");
 #endif
 #endif
+
+  //--OTA UPDATES
+
+  // Port defaults to 8266
+  // ArduinoOTA.setPort(8266);
+
+  // Hostname defaults to esp8266-[ChipID]
+  ArduinoOTA.setHostname("openWeather");
+
+  // No authentication by default
+  ArduinoOTA.setPassword("admin");
+
+  // Password can be set with it's md5 value as well
+  // MD5(admin) = 21232f297a57a5a743894a0e4a801fc3
+  // ArduinoOTA.setPasswordHash("21232f297a57a5a743894a0e4a801fc3");
+
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else {  // U_FS
+      type = "filesystem";
+    }
+
+// NOTE: if updating FS this would be the place to unmount FS using FS.end()
+#ifdef DEBUGING
+    Serial.println("Start updating " + type);
+#endif
+  });
+  ArduinoOTA.onEnd([]() {
+#ifdef DEBUGING
+    Serial.println("\nEnd");
+#endif
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+#ifdef DEBUGING
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+#endif
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+#ifdef DEBUGING
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+#endif
+  });
+  ArduinoOTA.begin();
 }  // end of void setup
 
 //--- ARDUINO LOOP ---
@@ -281,6 +351,8 @@ void loop() {
 #endif
 #endif
 
+  ArduinoOTA.handle();  //handles the ota update stuff
+
 //if mqtt is not connected, try again
 #ifdef USEMQTT
   if ((!MQTTclient.state() == 0)) {
@@ -298,6 +370,9 @@ void loop() {
   if (firstloop) {
     getWeather();
     firstloop = false;
+#ifdef DEBUGING
+    Serial.print("first loop: fetching weather data: ");
+#endif
   }
 
   //get Weatherdata every hour (or what you did custom)
@@ -305,6 +380,9 @@ void loop() {
     previousMillisReq = millis();
     if (modus == 0) {
       getWeather();
+#ifdef DEBUGING
+      Serial.print("timer: fetching weather data: ");
+#endif
     }
   }
 
@@ -314,6 +392,9 @@ void loop() {
   if (millis() - previousMillisMes >= measureIntervall) {
     previousMillisMes = millis();
     getDHT();
+#ifdef DEBUGING
+    Serial.print("timer: fetching dht sensor data: ");
+#endif
   }
 #endif
 
@@ -323,6 +404,9 @@ void loop() {
   if (millis() - previousMillisPub >= publishIntervall) {
     previousMillisPub = millis();
     publishMQTT();
+#ifdef DEBUGING
+    Serial.print("timer: sending mqtt data: ");
+#endif
   }
 #endif
 
@@ -364,7 +448,9 @@ void loop() {
 
 //--callback notifying us of the need to save config
 void saveConfigCallback() {
+#ifdef DEBUGING
   Serial.println("Should save config");
+#endif
   shouldSaveConfig = true;
 }
 
@@ -377,6 +463,7 @@ void setup_wifimanager() {
 
 //read configuration from FS json
 #ifdef DEBUGING
+  Serial.println("Using Wifi Manager");
   Serial.println("mounting FS...");
 #endif
 
@@ -492,7 +579,6 @@ void setup_wifimanager() {
   //wifiManager.setTimeout(120);
   //little animation to signal whats going on
 
-
   //Signal wifi connecting with green animation
   for (int i = 0; i < NUMPIXELS; i++) {  // For each pixel...
 
@@ -510,15 +596,19 @@ void setup_wifimanager() {
   //if it does not connect it starts an access point with the specified name
   //and goes into a blocking loop awaiting configuration
   if (!wifiManager.autoConnect("openWeather-Accesspoint")) {
+#ifdef DEBUGING
     Serial.println("failed to connect and hit timeout");
+#endif
     delay(3000);
     //reset and try again, or maybe put it to deep sleep
     ESP.reset();
     delay(5000);
   }
 
-  //if you get here you have connected to the WiFi
+//if you get here you have connected to the WiFi
+#ifdef DEBUGING
   Serial.println("connected to wifi: ");
+#endif
   //read updated parameters
   strcpy(mqttServer, custom_mqttServer.getValue());
   strcpy(mqttPort, custom_mqttPort.getValue());
@@ -537,8 +627,11 @@ void setup_wifimanager() {
 
   //save the custom parameters to FS
   if (shouldSaveConfig) {
+#ifdef DEBUGING
     Serial.println("saving config: ");
-    DynamicJsonDocument json(1024);
+#endif
+
+    DynamicJsonDocument json(2048);
 
     json["mqttServer"] = mqttServer;
     json["mqttPort"] = mqttPort;
@@ -557,7 +650,9 @@ void setup_wifimanager() {
 
     File configFile = SPIFFS.open("/config.json", "w");
     if (!configFile) {
+#ifdef DEBUGING
       Serial.println("failed to open config file for writing");
+#endif
     }
 
     serializeJson(json, Serial);
@@ -731,7 +826,7 @@ void callback(char* topic, byte* message, unsigned int length) {
   // Changes the output state according to the message
   if (String(topic) == subTopic || String(topic) == subTopic1) {
 #ifdef DEBUGING
-    Serial.print("Changing output to ");
+    Serial.print("Changing output to: ");
 #endif
     if (messageTemp == "PixelParty1") {
       MQTTclient.publish("stat/openWeather/state", "PixelParty1");
@@ -760,6 +855,10 @@ void callback(char* topic, byte* message, unsigned int length) {
       modus = 0;
       pixels.clear();
       //firstloop = true;
+    } else {
+#ifdef DEBUGING
+      Serial.println("not set anything different.");
+#endif
     }
   }
 }
@@ -1004,10 +1103,25 @@ void showWeather() {
 //--- DHT ---
 #ifdef USEDHT
 void getDHT() {
+  #ifdef DEBUGING
+  Serial.println("fetching sensor Data: ");
+  #endif
   delay(dht.getMinimumSamplingPeriod());
   humidity = dht.getHumidity();
   temperature = dht.getTemperature();
   heatIndex = dht.computeHeatIndex(temperature, humidity, false);
+  #ifdef DEBUGING
+  Serial.print("Humidity: ");
+  Serial.print(humidity);
+  Serial.print(" %");
+
+  Serial.print("Temperature: ");
+  Serial.print(temperature);
+  Serial.print(" °C");
+
+  Serial.print("heatIndex: ");
+  Serial.print(heatIndex);
+  #endif
 }
 #endif
 
